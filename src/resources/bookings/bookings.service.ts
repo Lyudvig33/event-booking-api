@@ -8,6 +8,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { BookingEntity, EventEntity } from '@core/entities';
 import { DataSource, Repository } from 'typeorm';
 import { ERROR_MESSAGES } from '@core/messages';
+import { StatsPeriod, TopUsersStatsDto } from './dto/top-users-stats.dto';
 
 @Injectable()
 export class BookingsService {
@@ -56,5 +57,45 @@ export class BookingsService {
       });
       return manager.getRepository(BookingEntity).save(booking);
     });
+  }
+
+  async topUsersStats(dto: TopUsersStatsDto) {
+    const { period, limit = 10 } = dto;
+
+    const now = new Date();
+    let startDate: Date;
+
+    switch (period) {
+      case StatsPeriod.DAY:
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        break;
+      case StatsPeriod.WEEK: {
+        const day = now.getDay() || 7;
+        startDate = new Date(now);
+        startDate.setDate(now.getDate() - day + 1);
+        startDate.setHours(0, 0, 0, 0);
+        break;
+      }
+      case StatsPeriod.MONTH:
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        break;
+      default:
+        throw new BadRequestException('Invalid stats period');
+    }
+
+    const rows = await this.bookingRepo
+      .createQueryBuilder('b')
+      .select('b.userId', 'userId')
+      .addSelect('COUNT(b.id)', 'bookingscount')
+      .where('b.createdAt >= :startDate', { startDate })
+      .groupBy('b.userId')
+      .orderBy('COUNT(b.id)', 'DESC')
+      .limit(limit)
+      .getRawMany<{ userId: string; bookingscount: string }>();
+
+    return rows.map((r) => ({
+      userId: r.userId,
+      bookingsCount: Number(r.bookingscount),
+    }));
   }
 }
